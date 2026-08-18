@@ -47,6 +47,27 @@
 paste ไฟล์ใหม่ทับ (หรือ `clasp push`) → **Deploy → Manage deployments → ✏️ → New version → Deploy**
 (URL เดิมไม่เปลี่ยน)
 
+## 6. (ทางเลือก) Auto-deploy จาก GitHub — push แล้วเข้า Apps Script เอง
+
+ตั้งค่าครั้งเดียว หลังจากนั้นทุกครั้งที่ merge เข้า `main` ระบบจะ push โค้ดเข้า
+Apps Script และออก version ใหม่ที่ URL เดิมให้อัตโนมัติ (ไฟล์ workflow:
+`.github/workflows/deploy-gas.yml`)
+
+1. เปิดใช้ Apps Script API ของบัญชีคุณ: https://script.google.com/home/usersettings → **On**
+2. บนเครื่องคุณ: `npm i -g @google/clasp` → `clasp login` (เปิด browser ให้ allow)
+   → ได้ไฟล์ credentials ที่ `~/.clasprc.json`
+3. ใน GitHub repo → **Settings → Secrets and variables → Actions** → เพิ่ม secrets:
+   | Secret | ค่า |
+   |--------|-----|
+   | `CLASPRC_JSON` | เนื้อหาทั้งไฟล์ `~/.clasprc.json` |
+   | `GAS_SCRIPT_ID` | Script ID ของโปรเจกต์ (Apps Script → ⚙ Project Settings → Script ID) |
+   | `GAS_DEPLOYMENT_ID` | (ไม่บังคับ) Deployment ID ของ Web app — ใส่แล้วทุก push จะออก version ใหม่ที่ URL เดิมให้เอง (Deploy → Manage deployments → คลิก deployment → copy ID ขึ้นต้น `AKfycb…`) |
+4. เสร็จแล้ว — merge เข้า `main` หรือกด **Run workflow** (แท็บ Actions) เพื่อ deploy ทันที
+
+> ⚠ ห้ามใช้ Script ID ของโปรเจกต์ PSA-HKT bridge เดิม — แอปนี้จะเขียนทับทั้งโปรเจกต์
+> สร้างโปรเจกต์ Apps Script ใหม่สำหรับ Globex โดยเฉพาะ
+> ถ้าไม่ใส่ `GAS_DEPLOYMENT_ID` โค้ดจะถูก push แต่ต้องกด New version เองใน editor
+
 ## แก้ปัญหา
 
 | อาการ | ทางแก้ |
