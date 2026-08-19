@@ -1,6 +1,0 @@
-# clasp pushes ONLY the three files below; everything else is ignored.
-**/**
-
-!appsscript.json
-!Index.html
-!Code.gs
