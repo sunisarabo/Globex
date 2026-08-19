@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html><head><base target="_top"><?!= include('Styles') ?></head>
+<body>
+  <div class="topbar">
+    <div><h1>หน้าอนุมัติของ Supervisor</h1>
+      <div class="sub">ลายเซ็นอิเล็กทรอนิกส์ = การล็อกอินบัญชีองค์กร + เวลาเซิร์ฟเวอร์</div></div>
+    <div class="user"><?= user ? user : 'ไม่พบอีเมล' ?><?= isSup ? ' · มีสิทธิ์อนุมัติ' : ' · ไม่มีสิทธิ์' ?></div>
+  </div>
+  <div class="nav">
+    <a href="?page=checkin">ลงเวลา (พนักงาน)</a>
+    <a href="?page=supervisor" class="active">อนุมัติ (Supervisor)</a>
+  </div>
+
+  <div class="wrap">
+    <? if (!isSup) { ?>
+      <div class="card"><div class="status closed">บัญชี <b><?= user ?></b> ไม่มีสิทธิ์อนุมัติ —
+        โปรดเพิ่มอีเมลนี้ในรายการ <code>CFG.SUPERVISORS</code> แล้ว deploy ใหม่</div></div>
+    <? } else { ?>
+    <div class="card">
+      <div class="row" style="align-items:end">
+        <div><label>วันที่</label><input type="date" id="date"></div>
+        <div style="flex:0 0 auto"><button class="btn ot" onclick="load()">ดูรายการ</button></div>
+        <div style="flex:0 0 auto"><button class="btn sec" onclick="exportPdf()">⬇ Export PDF</button></div>
+      </div>
+      <div id="pdfLink" class="muted" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>รายการลงเวลา–OT</h2>
+      <div style="overflow:auto">
+      <table id="tbl"><thead><tr>
+        <th>#</th><th>รหัส</th><th>ชื่อ-สกุล</th><th>ทีม</th><th>เข้า</th><th>ออก</th>
+        <th>ประเภทวัน</th><th>OT×1.5</th><th>OT×1</th><th>OT×3</th><th>สถานะ</th><th>จัดการ</th>
+      </tr></thead><tbody id="rows"><tr><td colspan="12" class="muted">— เลือกวันแล้วกด "ดูรายการ" —</td></tr></tbody>
+      <tfoot><tr><td colspan="7" class="r"><b>รวม</b></td>
+        <td class="r" id="s15">0</td><td class="r" id="s1">0</td><td class="r" id="s3">0</td>
+        <td colspan="2" class="r" id="scost"></td></tr></tfoot></table>
+      </div>
+    </div>
+    <? } ?>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+  var RATES={ot15:112.5,ot1:75,ot3:225};
+  function el(id){return document.getElementById(id);}
+  function toast(m,cls){var t=el('toast');t.textContent=m;t.className='toast show '+(cls||'');
+    setTimeout(function(){t.className='toast';},2600);}
+  el('date').value = new Date().toISOString().slice(0,10);
+
+  function load(){
+    google.script.run.withSuccessHandler(render).withFailureHandler(function(e){toast(e.message,'err');})
+      .apiListForApproval(el('date').value);
+  }
+  function render(list){
+    var tb=el('rows'); tb.innerHTML=''; var s15=0,s1=0,s3=0;
+    if(!list.length){ tb.innerHTML='<tr><td colspan="12" class="muted">— ไม่มีรายการ —</td></tr>'; }
+    list.forEach(function(r,i){
+      s15+=Number(r.ot15||0); s1+=Number(r.ot1||0); s3+=Number(r.ot3||0);
+      var lbl = {open:'ยังไม่ออก',closed:'รออนุมัติ',approved:'อนุมัติแล้ว'}[r.status];
+      if (r.leaveType) lbl = 'ลา '+r.leaveType+' · '+lbl;
+      var pill='<span class="pill '+r.status+'">'+lbl+'</span>';
+      var act = r.status==='closed'
+          ? '<button class="btn appr" onclick="approve('+r.rowIndex+')">✔ อนุมัติ</button>'
+        : r.status==='approved'
+          ? '<div class="muted">'+r.approvedBy+'<br>'+r.approvedAt+' <a href="#" onclick="unappr('+r.rowIndex+');return false">ยกเลิก</a></div>'
+          : '<span class="muted">รอลงเวลาออก</span>';
+      tb.insertAdjacentHTML('beforeend',
+        '<tr><td>'+(i+1)+'</td><td>'+r.empId+'</td><td class="l">'+r.empName+'</td><td>'+(r.team||'')+'</td>'+
+        '<td>'+(r.timeIn||'-')+'</td><td>'+(r.timeOut||'-')+'</td><td>'+(r.dayType||'')+'</td>'+
+        '<td class="r">'+(r.ot15||0)+'</td><td class="r">'+(r.ot1||0)+'</td><td class="r">'+(r.ot3||0)+'</td>'+
+        '<td>'+pill+'</td><td>'+act+'</td></tr>');
+    });
+    el('s15').textContent=s15; el('s1').textContent=s1; el('s3').textContent=s3;
+    var cost=s15*RATES.ot15+s1*RATES.ot1+s3*RATES.ot3;
+    el('scost').textContent='รวมค่า OT: '+cost.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' บาท';
+  }
+  function approve(row){
+    google.script.run.withSuccessHandler(function(res){ toast('อนุมัติแล้วโดย '+res.approvedBy,'ok'); load(); })
+      .withFailureHandler(function(e){toast(e.message,'err');}).apiApprove(row);
+  }
+  function unappr(row){
+    google.script.run.withSuccessHandler(function(){ toast('ยกเลิกการอนุมัติแล้ว','ok'); load(); })
+      .withFailureHandler(function(e){toast(e.message,'err');}).apiUnapprove(row);
+  }
+  function exportPdf(){
+    el('pdfLink').textContent='กำลังสร้าง PDF...';
+    google.script.run.withSuccessHandler(function(res){
+      el('pdfLink').innerHTML='สร้างแล้ว: <a href="'+res.url+'" target="_blank">'+res.name+'</a>'; toast('Export PDF สำเร็จ','ok');
+    }).withFailureHandler(function(e){ el('pdfLink').textContent=''; toast(e.message,'err'); }).apiExportPdf(el('date').value);
+  }
+  load();
+</script>
+</body></html>
