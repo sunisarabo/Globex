@@ -17,13 +17,20 @@ const CFG = {
   PDF_FOLDER_ID: '',            // Drive folder สำหรับเก็บ PDF (เว้นว่าง = My Drive ราก)
   NORMAL_HOURS: 8,              // ชั่วโมงทำงานปกติต่อกะ
   LEAVE_TYPES: { AL:'ลาพักร้อน', SL:'ลาป่วย', BL:'ลากิจ' },
+  // Geofence จุดลงเวลา — ค่าตั้งต้น = ท่าอากาศยานภูเก็ต (แก้พิกัด/รัศมีได้)
+  GEO: {
+    ENABLED: true,
+    LAT: 8.1132, LNG: 98.3169,   // จุดศูนย์กลางพื้นที่ลงเวลา (HKT)
+    RADIUS_M: 1500,              // รัศมีที่ถือว่า "ในพื้นที่" (เมตร)
+    BLOCK: false                 // true = ห้ามลงเวลานอกพื้นที่/ไม่มีพิกัด · false = บันทึกและติดธงเฉย ๆ
+  },
   RATES: { ot15: 112.50, ot1: 75.00, ot3: 225.00 }
 };
 
 const SH = { LOG: 'TimeLog', EMP: 'Employees', HOL: 'Holidays' };
 const LOG_HEADERS = ['id','date','empId','empName','team','timeIn','timeOut',
   'breakH','workedH','otStart','otEnd','ot15','ot1','ot3','dayType',
-  'status','approvedBy','approvedAt','note','leaveType'];
+  'status','approvedBy','approvedAt','note','leaveType','inLoc','outLoc'];
 
 /* ---------------------- Web routing ---------------------- */
 function doGet(e) {
@@ -64,11 +71,17 @@ function round2(n){ return Math.round((Number(n)+Number.EPSILON)*100)/100; }
 function uid(){ return Utilities.getUuid().slice(0,8); }
 
 function ensureSheets(){
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SHEETS_READY') === 'v2') return;   // ทำครั้งเดียว — ตัด latency ทุก doGet
   const s = ss_();
   if (!s.getSheetByName(SH.LOG)) {
     const sh = s.insertSheet(SH.LOG);
     sh.getRange(1,1,1,LOG_HEADERS.length).setValues([LOG_HEADERS]).setFontWeight('bold');
     sh.setFrozenRows(1);
+  } else {
+    // เวอร์ชันก่อนมีคอลัมน์น้อยกว่า — เขียนหัวตารางใหม่ (คอลัมน์ใหม่ต่อท้าย ไม่กระทบข้อมูลเดิม)
+    s.getSheetByName(SH.LOG).getRange(1,1,1,LOG_HEADERS.length)
+      .setValues([LOG_HEADERS]).setFontWeight('bold');
   }
   if (!s.getSheetByName(SH.EMP)) {
     const sh = s.insertSheet(SH.EMP);
@@ -83,6 +96,7 @@ function ensureSheets(){
   // ลบชีต Sheet1 เปล่า ถ้ามี
   const def = s.getSheetByName('Sheet1');
   if (def && def.getLastRow() === 0 && s.getSheets().length > 1) s.deleteSheet(def);
+  props.setProperty('SHEETS_READY','v2');
 }
 
 // Mock 80 รายชื่อสำหรับทดสอบ — แทนที่ด้วยรายชื่อจริงในชีต Employees ได้เลย
@@ -135,13 +149,42 @@ function computeOT(dateStr, workedH, otStart, otEnd){
            dayType: holiday ? 'วันหยุด' : 'วันทำงาน' };
 }
 
+/* ---------------------- Geofence (GPS) ---------------------- */
+function distM_(lat1,lng1,lat2,lng2){
+  const R=6371000, rad=x=>x*Math.PI/180;
+  const dLat=rad(lat2-lat1), dLng=rad(lng2-lng1);
+  const a=Math.sin(dLat/2)*Math.sin(dLat/2)
+        + Math.cos(rad(lat1))*Math.cos(rad(lat2))*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return Math.round(2*R*Math.asin(Math.sqrt(a)));
+}
+// คืนข้อความพิกัดสำหรับบันทึกลงชีต · โยน error ถ้า BLOCK เปิดและอยู่นอกพื้นที่
+function geoNote_(geo){
+  if (!CFG.GEO.ENABLED) return '';
+  if (!geo || geo.lat == null || geo.lng == null){
+    if (CFG.GEO.BLOCK) throw new Error('ต้องอนุญาตตำแหน่ง (GPS) ในเบราว์เซอร์ก่อนลงเวลา');
+    return 'ไม่มีพิกัด';
+  }
+  const d  = distM_(Number(geo.lat), Number(geo.lng), CFG.GEO.LAT, CFG.GEO.LNG);
+  const acc = Math.round(Number(geo.acc)||0);
+  const ok = d <= CFG.GEO.RADIUS_M + acc;     // เผื่อค่าความคลาดเคลื่อนของ GPS
+  if (!ok && CFG.GEO.BLOCK) throw new Error('อยู่นอกพื้นที่ลงเวลา — ห่างจุดตรวจ '+d+' ม. (เกิน '+CFG.GEO.RADIUS_M+' ม.)');
+  return (ok?'✓ในพื้นที่ ':'⚠นอกพื้นที่ ')
+       + Number(geo.lat).toFixed(5)+','+Number(geo.lng).toFixed(5)
+       + ' ('+d+' ม.'+(acc?' ±'+acc+' ม.':'')+')';
+}
+
 /* ---------------------- Employee: check-in / out / OT ---------------------- */
 function apiGetEmployees(){
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('employees');
+  if (hit) return JSON.parse(hit);
   const sh = sheet_(SH.EMP);
   if (!sh || sh.getLastRow()<2) return [];
-  return sh.getRange(2,1,sh.getLastRow()-1,3).getValues()
+  const list = sh.getRange(2,1,sh.getLastRow()-1,3).getValues()
     .filter(r=>r[0])
     .map(r=>({ empId:String(r[0]), empName:String(r[1]), team:String(r[2]||'') }));
+  cache.put('employees', JSON.stringify(list), 300);   // แก้รายชื่อในชีต มีผลภายใน ≤5 นาที
+  return list;
 }
 function findTodayRow_(empId){
   const sh = sheet_(SH.LOG);
@@ -169,10 +212,11 @@ function apiGetStatus(empId){
     timeIn: fmtTime(o.timeIn), timeOut: fmtTime(o.timeOut),
     otStart:o.otStart, otEnd:o.otEnd,
     ot15:o.ot15, ot1:o.ot1, ot3:o.ot3, dayType:o.dayType,
-    approvedBy:o.approvedBy, approvedAt:o.approvedAt, leaveType:o.leaveType||''
+    approvedBy:o.approvedBy, approvedAt:o.approvedAt, leaveType:o.leaveType||'',
+    inLoc:o.inLoc||'', outLoc:o.outLoc||''
   };
 }
-function apiCheckIn(empId){
+function apiCheckIn(empId, geo){
   const emp = apiGetEmployees().filter(e=>e.empId===String(empId))[0];
   if (!emp) throw new Error('ไม่พบรหัสพนักงาน ' + empId + ' ในทะเบียน');
   const dup = findTodayRow_(empId);
@@ -181,18 +225,19 @@ function apiCheckIn(empId){
     throw new Error(lv ? 'วันนี้แจ้งลา ('+lv+') ไว้แล้ว — ยกเลิกกับ Supervisor ก่อนจึงลงเวลาได้'
                        : 'พนักงานคนนี้ลงเวลาเข้าของวันนี้แล้ว');
   }
+  const inLoc = geoNote_(geo);
   const sh = sheet_(SH.LOG);
   const now = new Date();
   const rec = {
     id:uid(), date:todayStr(), empId:emp.empId, empName:emp.empName, team:emp.team,
     timeIn:now, timeOut:'', breakH:1, workedH:'', otStart:'', otEnd:'',
     ot15:0, ot1:0, ot3:0, dayType: isHoliday(todayStr())?'วันหยุด':'วันทำงาน',
-    status:'open', approvedBy:'', approvedAt:'', note:'', leaveType:''
+    status:'open', approvedBy:'', approvedAt:'', note:'', leaveType:'', inLoc:inLoc, outLoc:''
   };
   sh.appendRow(LOG_HEADERS.map(h=>rec[h]));
   return apiGetStatus(empId);
 }
-function apiCheckOut(empId, breakH){
+function apiCheckOut(empId, breakH, geo){
   const found = findTodayRow_(empId);
   if (!found) throw new Error('ยังไม่ได้ลงเวลาเข้า');
   const o = rowToObj_(found.row);
@@ -200,12 +245,11 @@ function apiCheckOut(empId, breakH){
   const now = new Date();
   const brk = Number(breakH||o.breakH||0);
   const worked = round2((now.getTime() - new Date(o.timeIn).getTime())/3600000 - brk);
-  const sh = sheet_(SH.LOG); const r = found.rowIndex;
   const ot = computeOT(o.date, worked, o.otStart, o.otEnd);
-  setCell_(sh,r,'timeOut',now); setCell_(sh,r,'breakH',brk);
-  setCell_(sh,r,'workedH',worked); setCell_(sh,r,'status','closed');
-  setCell_(sh,r,'ot15',ot.ot15); setCell_(sh,r,'ot1',ot.ot1); setCell_(sh,r,'ot3',ot.ot3);
-  setCell_(sh,r,'dayType',ot.dayType);
+  o.timeOut=now; o.breakH=brk; o.workedH=worked; o.status='closed';
+  o.ot15=ot.ot15; o.ot1=ot.ot1; o.ot3=ot.ot3; o.dayType=ot.dayType;
+  o.outLoc = geoNote_(geo);
+  writeRow_(sheet_(SH.LOG), found.rowIndex, o);
   return apiGetStatus(empId);
 }
 function apiSubmitOT(empId, otStart, otEnd, note){
@@ -215,11 +259,10 @@ function apiSubmitOT(empId, otStart, otEnd, note){
   if (o.status==='approved') throw new Error('รายการนี้อนุมัติแล้ว แก้ไขไม่ได้');
   const worked = Number(o.workedH||0);
   const ot = computeOT(o.date, worked, otStart, otEnd);
-  const sh = sheet_(SH.LOG); const r = found.rowIndex;
-  setCell_(sh,r,'otStart',otStart); setCell_(sh,r,'otEnd',otEnd);
-  setCell_(sh,r,'ot15',ot.ot15); setCell_(sh,r,'ot1',ot.ot1); setCell_(sh,r,'ot3',ot.ot3);
-  setCell_(sh,r,'dayType',ot.dayType);
-  if (note!=null) setCell_(sh,r,'note',note);
+  o.otStart=otStart; o.otEnd=otEnd;
+  o.ot15=ot.ot15; o.ot1=ot.ot1; o.ot3=ot.ot3; o.dayType=ot.dayType;
+  if (note!=null) o.note=note;
+  writeRow_(sheet_(SH.LOG), found.rowIndex, o);
   return apiGetStatus(empId);
 }
 // แจ้งลา — สร้างรายการสถานะ closed (รอ Supervisor อนุมัติเป็นลายเซ็นเดียวกับลงเวลา)
@@ -245,6 +288,11 @@ function apiSubmitLeave(empId, leaveType, note){
 }
 
 function setCell_(sh,row,field,val){ sh.getRange(row, LOG_HEADERS.indexOf(field)+1).setValue(val); }
+// เขียนทั้งแถวใน call เดียว — เดิม setCell_ ทีละช่อง 8-9 ครั้ง = ต้นเหตุอาการหน่วง
+function writeRow_(sh, rowIndex, obj){
+  sh.getRange(rowIndex,1,1,LOG_HEADERS.length)
+    .setValues([LOG_HEADERS.map(h=>obj[h]!=null?obj[h]:'')]);
+}
 
 /* ---------------------- Supervisor: approve (e-signature) ---------------------- */
 function apiListForApproval(dateStr){
@@ -261,7 +309,7 @@ function apiListForApproval(dateStr){
       timeIn:fmtTime(o.timeIn), timeOut:fmtTime(o.timeOut), workedH:o.workedH,
       otStart:o.otStart, otEnd:o.otEnd, ot15:o.ot15, ot1:o.ot1, ot3:o.ot3,
       dayType:o.dayType, status:o.status, approvedBy:o.approvedBy, approvedAt:o.approvedAt,
-      leaveType:o.leaveType||''
+      leaveType:o.leaveType||'', inLoc:o.inLoc||'', outLoc:o.outLoc||''
     });
   });
   return out;
@@ -273,10 +321,9 @@ function apiApprove(rowIndex){
   if (o.status==='open') throw new Error('พนักงานยังไม่ได้ลงเวลาออก');
   if (o.status==='approved') throw new Error('อนุมัติไปแล้วโดย ' + o.approvedBy);
   // ==== ลายเซ็นอิเล็กทรอนิกส์ = อีเมลที่ล็อกอิน + เวลาเซิร์ฟเวอร์ (แก้ย้อนหลังไม่ได้) ====
-  setCell_(sh,rowIndex,'status','approved');
-  setCell_(sh,rowIndex,'approvedBy',getUserEmail());
-  setCell_(sh,rowIndex,'approvedAt',nowStr());
-  return { ok:true, approvedBy:getUserEmail(), approvedAt:nowStr() };
+  o.status='approved'; o.approvedBy=getUserEmail(); o.approvedAt=nowStr();
+  writeRow_(sh, rowIndex, o);
+  return { ok:true, approvedBy:o.approvedBy, approvedAt:o.approvedAt };
 }
 function apiUnapprove(rowIndex){
   if (!isSupervisor()) throw new Error('ไม่มีสิทธิ์');
