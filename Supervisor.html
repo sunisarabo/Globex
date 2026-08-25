@@ -48,6 +48,12 @@
     setTimeout(function(){t.className='toast';},2600);}
   el('date').value = new Date().toISOString().slice(0,10);
 
+  // ธงพิกัด: ✓ ในพื้นที่ · ⚠ นอกพื้นที่/ไม่มีพิกัด (ชี้เมาส์ดูรายละเอียด)
+  function geoFlag(loc){
+    if (!loc) return '';
+    if (loc.indexOf('✓')===0) return ' <span style="color:#0a0">📍</span>';
+    return ' <span style="color:#c60">⚠📍</span>';
+  }
   function load(){
     google.script.run.withSuccessHandler(render).withFailureHandler(function(e){toast(e.message,'err');})
       .apiListForApproval(el('date').value);
@@ -67,7 +73,9 @@
           : '<span class="muted">รอลงเวลาออก</span>';
       tb.insertAdjacentHTML('beforeend',
         '<tr><td>'+(i+1)+'</td><td>'+r.empId+'</td><td class="l">'+r.empName+'</td><td>'+(r.team||'')+'</td>'+
-        '<td>'+(r.timeIn||'-')+'</td><td>'+(r.timeOut||'-')+'</td><td>'+(r.dayType||'')+'</td>'+
+        '<td title="'+(r.inLoc||'')+'">'+(r.timeIn||'-')+geoFlag(r.inLoc)+'</td>'+
+        '<td title="'+(r.outLoc||'')+'">'+(r.timeOut||'-')+geoFlag(r.outLoc)+'</td>'+
+        '<td>'+(r.dayType||'')+'</td>'+
         '<td class="r">'+(r.ot15||0)+'</td><td class="r">'+(r.ot1||0)+'</td><td class="r">'+(r.ot3||0)+'</td>'+
         '<td>'+pill+'</td><td>'+act+'</td></tr>');
     });

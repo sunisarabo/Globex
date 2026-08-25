@@ -94,11 +94,28 @@
     el('btnLv').disabled  = !hasEmp || st.state!=='none';
     if(st.otStart){ el('otStart').value=st.otStart; el('otEnd').value=st.otEnd; }
     if(st.state==='closed'||st.state==='approved'){
-      el('otResult').innerHTML='สรุป OT — ประเภทวัน: <b>'+(st.dayType||'')+'</b> · OT×1.5 '+st.ot15+' · OT×1 '+st.ot1+' · OT×3 '+st.ot3+' ชม.';
+      el('otResult').innerHTML='สรุป OT — ประเภทวัน: <b>'+(st.dayType||'')+'</b> · OT×1.5 '+st.ot15+' · OT×1 '+st.ot1+' · OT×3 '+st.ot3+' ชม.'+
+        (st.inLoc?'<br>📍 เข้า: '+st.inLoc:'')+(st.outLoc?' · ออก: '+st.outLoc:'');
+    } else if(st.state==='open' && st.inLoc){
+      el('otResult').innerHTML='📍 พิกัดตอนเข้า: '+st.inLoc;
     } else el('otResult').textContent='';
   }
-  function doIn(){ run('apiCheckIn',[el('emp').value],'ลงเวลาเข้าเรียบร้อย'); }
-  function doOut(){ run('apiCheckOut',[el('emp').value,1],'ลงเวลาออกเรียบร้อย'); }
+  // อ่านพิกัด GPS (ขออนุญาตครั้งแรก) — อ่านไม่ได้ = ส่ง null ให้ server ตัดสินตาม CFG.GEO.BLOCK
+  function getGeo(cb){
+    if (!navigator.geolocation){ cb(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      function(p){ cb({lat:p.coords.latitude, lng:p.coords.longitude, acc:p.coords.accuracy}); },
+      function(){ cb(null); },
+      {enableHighAccuracy:true, timeout:8000, maximumAge:60000});
+  }
+  function doIn(){
+    toast('📍 กำลังอ่านพิกัด GPS…');
+    getGeo(function(g){ run('apiCheckIn',[el('emp').value,g],'ลงเวลาเข้าเรียบร้อย'); });
+  }
+  function doOut(){
+    toast('📍 กำลังอ่านพิกัด GPS…');
+    getGeo(function(g){ run('apiCheckOut',[el('emp').value,1,g],'ลงเวลาออกเรียบร้อย'); });
+  }
   function doOT(){
     if(!el('otStart').value||!el('otEnd').value){ toast('กรอกเวลา OT ให้ครบ','err'); return; }
     run('apiSubmitOT',[el('emp').value,el('otStart').value,el('otEnd').value,el('note').value],'บันทึก OT เรียบร้อย');
