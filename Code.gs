@@ -20,10 +20,11 @@ const CFG = {
   // Geofence จุดลงเวลา — ค่าตั้งต้น = ท่าอากาศยานภูเก็ต (แก้พิกัด/รัศมีได้)
   GEO: {
     ENABLED: true,
-    LAT: 8.1132, LNG: 98.3169,   // จุดศูนย์กลางพื้นที่ลงเวลา (HKT)
-    RADIUS_M: 1500,              // รัศมีที่ถือว่า "ในพื้นที่" (เมตร)
+    LAT: 8.10520, LNG: 98.30710, // จุดลงเวลาจริงหน้าอาคาร (จากประวัติแอปเดิม)
+    RADIUS_M: 1000,              // รัศมีที่ถือว่า "ในพื้นที่" (เมตร)
     BLOCK: false                 // true = ห้ามลงเวลานอกพื้นที่/ไม่มีพิกัด · false = บันทึกและติดธงเฉย ๆ
   },
+  PUNCH_GAP_MIN: 5,              // เช็คเอาท์ได้หลังเช็คอินอย่างน้อยกี่นาที (กันกดติดกัน)
   RATES: { ot15: 112.50, ot1: 75.00, ot3: 225.00 }
 };
 
@@ -243,6 +244,10 @@ function apiCheckOut(empId, breakH, geo){
   const o = rowToObj_(found.row);
   if (o.status==='approved') throw new Error('รายการนี้อนุมัติแล้ว แก้ไขไม่ได้');
   const now = new Date();
+  const sinceInMin = (now.getTime() - new Date(o.timeIn).getTime())/60000;
+  if (sinceInMin < CFG.PUNCH_GAP_MIN){
+    throw new Error('เพิ่งลงเวลาเข้า — กดลงเวลาออกได้หลังผ่านไป '+CFG.PUNCH_GAP_MIN+' นาที');
+  }
   const brk = Number(breakH||o.breakH||0);
   const worked = round2((now.getTime() - new Date(o.timeIn).getTime())/3600000 - brk);
   const ot = computeOT(o.date, worked, o.otStart, o.otEnd);
@@ -292,6 +297,30 @@ function setCell_(sh,row,field,val){ sh.getRange(row, LOG_HEADERS.indexOf(field)
 function writeRow_(sh, rowIndex, obj){
   sh.getRange(rowIndex,1,1,LOG_HEADERS.length)
     .setValues([LOG_HEADERS.map(h=>obj[h]!=null?obj[h]:'')]);
+}
+
+// ประวัติการลงเวลาของพนักงานหนึ่งคน ย้อนหลัง N วัน (ล่าสุดขึ้นก่อน)
+function apiMyHistory(empId, days){
+  if (!empId) return [];
+  const sh = sheet_(SH.LOG); const last = sh.getLastRow();
+  if (last < 2) return [];
+  const cutoff = Utilities.formatDate(
+    new Date(Date.now() - (Number(days)||14)*86400000), CFG.TZ, 'yyyy-MM-dd');
+  const data = sh.getRange(2,1,last-1,LOG_HEADERS.length).getValues();
+  const out = [];
+  for (let i = data.length-1; i >= 0 && out.length < 40; i--){
+    const o = rowToObj_(data[i]);
+    if (String(o.empId) !== String(empId)) continue;
+    const d = String(o.date).slice(0,10);
+    if (d < cutoff) break;
+    out.push({
+      date:d, timeIn:fmtTime(o.timeIn), timeOut:fmtTime(o.timeOut),
+      workedH:o.workedH||0, ot15:o.ot15||0, ot1:o.ot1||0, ot3:o.ot3||0,
+      dayType:o.dayType||'', status:o.status, leaveType:o.leaveType||'',
+      approvedBy:o.approvedBy||'', inLoc:o.inLoc||'', outLoc:o.outLoc||''
+    });
+  }
+  return out;
 }
 
 /* ---------------------- Supervisor: approve (e-signature) ---------------------- */

@@ -53,6 +53,13 @@
       <div class="btns"><button class="btn sec" id="btnLv" onclick="doLeave()" disabled>🌴 แจ้งลาวันนี้</button></div>
       <div class="muted" style="margin-top:8px">รายการลาจะไปรอ Supervisor อนุมัติเช่นเดียวกับการลงเวลา</div>
     </div>
+    <div class="card">
+      <h2>ประวัติการลงเวลา (14 วันล่าสุด)</h2>
+      <div style="overflow:auto"><table id="histTbl">
+        <thead><tr><th>วันที่</th><th>เข้า</th><th>ออก</th><th>ชม.</th><th>OT</th><th>สถานะ</th><th>📍</th></tr></thead>
+        <tbody id="histRows"><tr><td colspan="7" class="muted">— เลือกพนักงานเพื่อดูประวัติ —</td></tr></tbody>
+      </table></div>
+    </div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -75,8 +82,24 @@
 
   function refresh(){
     var id=el('emp').value;
-    if(!id){ render({state:'none'}); return; }
+    if(!id){ render({state:'none'}); renderHist([]); return; }
     google.script.run.withSuccessHandler(render).withFailureHandler(function(e){toast(e.message,'err');}).apiGetStatus(id);
+    google.script.run.withSuccessHandler(renderHist).apiMyHistory(id, 14);
+  }
+  function renderHist(list){
+    var tb=el('histRows'); if(!tb) return;
+    if(!list || !list.length){ tb.innerHTML='<tr><td colspan="7" class="muted">— ไม่มีประวัติในช่วง 14 วัน —</td></tr>'; return; }
+    tb.innerHTML='';
+    list.forEach(function(r){
+      var st = r.leaveType ? 'ลา '+r.leaveType
+             : {open:'อยู่ในกะ',closed:'รออนุมัติ',approved:'อนุมัติแล้ว'}[r.status]||r.status;
+      var ot = (Number(r.ot15)||0)+(Number(r.ot1)||0)+(Number(r.ot3)||0);
+      var geo = r.inLoc ? (r.inLoc.indexOf('✓')===0?'<span style="color:#0a0" title="'+r.inLoc+(r.outLoc?' | '+r.outLoc:'')+'">📍</span>'
+                                                   :'<span style="color:#c60" title="'+r.inLoc+(r.outLoc?' | '+r.outLoc:'')+'">⚠📍</span>') : '';
+      tb.insertAdjacentHTML('beforeend',
+        '<tr><td>'+r.date+'</td><td>'+(r.timeIn||'-')+'</td><td>'+(r.timeOut||'-')+'</td>'+
+        '<td>'+(r.workedH||'-')+'</td><td>'+(ot||'-')+'</td><td>'+st+'</td><td>'+geo+'</td></tr>');
+    });
   }
   function render(st){
     var box=el('statusBox');
