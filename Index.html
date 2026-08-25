@@ -97,7 +97,8 @@
       var geo = r.inLoc ? (r.inLoc.indexOf('✓')===0?'<span style="color:#0a0" title="'+r.inLoc+(r.outLoc?' | '+r.outLoc:'')+'">📍</span>'
                                                    :'<span style="color:#c60" title="'+r.inLoc+(r.outLoc?' | '+r.outLoc:'')+'">⚠📍</span>') : '';
       tb.insertAdjacentHTML('beforeend',
-        '<tr><td>'+r.date+'</td><td>'+(r.timeIn||'-')+'</td><td>'+(r.timeOut||'-')+'</td>'+
+        '<tr><td>'+r.date+(r.shiftCode?' <span class="muted">'+r.shiftCode+'</span>':'')+'</td>'+
+        '<td>'+(r.timeIn||'-')+(r.lateMin?' <span style="color:#c60" title="สาย '+r.lateMin+' นาที">⚠</span>':'')+'</td><td>'+(r.timeOut||'-')+'</td>'+
         '<td>'+(r.workedH||'-')+'</td><td>'+(ot||'-')+'</td><td>'+st+'</td><td>'+geo+'</td></tr>');
     });
   }
@@ -108,7 +109,12 @@
     box.className='status '+st.state;
     if (st.leaveType){
       box.textContent='แจ้งลา '+st.leaveType+' แล้ว'+(st.state==='approved'?' · อนุมัติโดย '+st.approvedBy:' · รออนุมัติ');
-    } else box.textContent=map[st.state]||'';
+    } else {
+      var txt = map[st.state]||'';
+      if (st.shiftCode) txt += ' · กะ '+st.shiftCode;
+      if (st.lateMin) txt += ' · ⚠สาย '+st.lateMin+' นาที';
+      box.textContent = txt;
+    }
     var hasEmp=!!el('emp').value;
     var onLeave=!!st.leaveType;
     el('btnIn').disabled  = !hasEmp || st.state!=='none';

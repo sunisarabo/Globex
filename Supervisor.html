@@ -73,7 +73,7 @@
           : '<span class="muted">รอลงเวลาออก</span>';
       tb.insertAdjacentHTML('beforeend',
         '<tr><td>'+(i+1)+'</td><td>'+r.empId+'</td><td class="l">'+r.empName+'</td><td>'+(r.team||'')+'</td>'+
-        '<td title="'+(r.inLoc||'')+'">'+(r.timeIn||'-')+geoFlag(r.inLoc)+'</td>'+
+        '<td title="'+(r.inLoc||'')+'">'+(r.timeIn||'-')+(r.lateMin?' <span style="color:#c60">สาย'+r.lateMin+'น.</span>':'')+geoFlag(r.inLoc)+'</td>'+
         '<td title="'+(r.outLoc||'')+'">'+(r.timeOut||'-')+geoFlag(r.outLoc)+'</td>'+
         '<td>'+(r.dayType||'')+'</td>'+
         '<td class="r">'+(r.ot15||0)+'</td><td class="r">'+(r.ot1||0)+'</td><td class="r">'+(r.ot3||0)+'</td>'+
